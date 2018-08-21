@@ -1,0 +1,313 @@
+---
+title: "Multimodal Data Fusion in 3D Printing Quality Prediction"
+---
+This project presents a novel approach to predict the quality of 3D-printed objects using multiple measurement data sources. Dimension, profile, and surface roughness are represented in image data taken by two sensors of different accuracy and efficiency. Dimension reduction techniques are employed for extracting features from the measurement images. Quality metric is defined fusing profile deviation and surface roughness. The final result is a two-level classification model trained with printing input parameters and measurement data from the two sensors respectively at each stage to predict quality. The model proposes using a preliminary classifier for an initial inspection, followed by a more refined classifier trained by high resolution measurements to further classify the samples predicted as uncertain in the previous round. Such method could guarantee time efficiency while maintaining high accuracy. The result shows feature extraction from high-dimensional image data as a promising technique for efficient and automated quality inspection. 
+
+```{r}
+#3D scanner
+scanner_folder <- "3D scanner/3d-printing/"
+scanner_file_list <- list.files(path = scanner_folder, pattern = "*.csv")
+scanner_data_list <- list()
+z_list <- list()
+for (i in 1:length(scanner_file_list)){
+  temp <- assign(scanner_file_list[i], read.csv(paste(scanner_folder, scanner_file_list[i], sep=''), skip = 3, header = FALSE))
+  X <- as.numeric(levels(temp$V2))[temp$V2]
+  Y <- as.numeric(levels(temp$V3))[temp$V3]
+  Z <- as.numeric(levels(temp$V4))[temp$V4]
+  z_list[[i]] <- as.numeric(levels(temp[which(X < 35 & Y < 35),]$V4))[temp[which(X < 35 & Y < 35),]$V4]
+  z_list[[i]][is.na(z_list[[i]])] <- 0
+}
+for(i in 1:length(z_list)){
+  print(length(z_list[[i]]))
+}
+
+
+z_list[c(4,17,22)] <- NULL
+
+#training and test
+training_index <- sample(1:length(z_list), 0.7*length(z_list))
+training_set <- data_list[training_index]
+
+
+scanner_training_set <- z_list[training_index]
+scanner_testing_set <- z_list[-training_index]
+scanner_matrix <- matrix(c(scanner_training_set[[1]], scanner_training_set[[2]], 
+                           scanner_training_set[[3]], scanner_training_set[[4]], 
+                           scanner_training_set[[5]], scanner_training_set[[6]], 
+                           scanner_training_set[[7]], scanner_training_set[[8]],
+                           scanner_training_set[[9]], scanner_training_set[[10]],
+                           scanner_training_set[[11]], scanner_training_set[[12]], 
+                           scanner_training_set[[13]], scanner_training_set[[14]]),
+                           nrow = 14, ncol= 50000)
+scanner_pca <- prcomp(scanner_matrix)
+summary(scanner_pca)
+SPC1 <- scanner_pca$x[,1]
+SPC2 <- scanner_pca$x[,2]
+SPC3 <- scanner_pca$x[,3]
+SPC4 <- scanner_pca$x[,4]
+
+scanner_test_matrix <- matrix(c(scanner_testing_set[[1]], scanner_testing_set[[2]], 
+                           scanner_testing_set[[3]], scanner_testing_set[[4]], 
+                           scanner_testing_set[[5]], scanner_testing_set[[6]]),
+                           nrow = 6, ncol= 50000)
+scanner_test_pca <- prcomp(scanner_test_matrix)
+summary(scanner_test_pca)
+SPC1_test <- scanner_test_pca$x[,1]
+SPC2_test <- scanner_test_pca$x[,2]
+SPC3_test <- scanner_test_pca$x[,3]
+SPC4_test <- scanner_test_pca$x[,4]
+
+
+```
+
+```{r}
+#roughness
+roughness_folder <- "roughness3/"
+roughness_list <- list.files(path = roughness_folder, pattern = "*.csv")
+roughness <- list()
+
+for (i in 1:length(roughness_list)){
+  temp_roughness <- data.frame(assign(roughness_list[i], read.csv(paste(roughness_folder, roughness_list[i], sep=''), skip = 7, header = FALSE)))
+  area1 <- temp_roughness[1,6]
+  area2 <- temp_roughness[2,6]
+  roughness[[i]] <- (area1 + area2)/2
+}
+
+roughness <- c(roughness[[1]], roughness[[2]],roughness[[3]],
+               roughness[[5]], roughness[[6]], roughness[[7]], roughness[[8]], roughness[[9]], 
+               roughness[[10]], roughness[[11]], roughness[[12]], roughness[[13]], roughness[[14]],                    roughness[[15]], roughness[[16]], roughness[[17]], roughness[[18]], roughness[[19]],                   roughness[[20]],roughness[[21]])
+
+roughness_training <- roughness[training_index]
+roughness_testing <- roughness[-training_index]
+```
+
+```{r}
+#profile deviation
+profile_file <- data.frame(read.csv("profile_quality.csv", header = TRUE))
+profile_resid <- profile_file[,2]
+profile_training <- profile_resid[training_index]
+profile_testing <- profile_resid[-training_index]
+```
+
+
+
+```{r}
+#preliminary regression
+model_df <- data.frame(SPC1, SPC2, SPC3, SPC4,
+                       c(100,20,40, 40, 40, 60, 60, 60, 
+                         100, 100, 20, 20, 40, 60), 
+                       c(0.1, 0.1, 0.1, 0.1, 0.1,0.1,0.1, 0.1, 
+                         0.2, 0.2, 0.2, 0.2, 0.2, 0.2), 
+                       c(20, 40, 20, 40, 60, 20, 40, 60, 40,
+                         60, 20, 60, 20, 60))
+colnames(model_df) <- c("SPC1", "SPC2", "SPC3", "SPC4","fill", "thickness", "speed")
+#model_df$quality <- factor(model_df$quality, levels = sort(unique(model_df$quality)))
+attach(model_df)
+
+
+```
+
+```{r}
+#profile
+profile_model1 <- lm(profile_training  ~ SPC1 + SPC2+ SPC3 + SPC4 + fill + thickness + speed, data = model_df)
+summary(profile_model1)
+step_b <- step(profile_model1, direction = "backward")
+profile_model1 <- lm(profile_training  ~ SPC1 + SPC2 + SPC4 + fill + thickness, data = model_df)
+summary(profile_model1)
+#ggpairs(model_df, columns = 1:ncol(model_df), title = "",  axisLabels = "show")
+
+residplot_profile <- resid(profile_model1)
+#plot(model_df$SPC4, residplot_profile)
+#abline(0,0)
+
+model_df_test_profile <- data.frame(SPC1_test, SPC2_test, SPC4_test,
+                            c(100, 100, 20, 100, 40, 40),
+                            c(0.1, 0.1, 0.1, 0.2, 0.2, 0.2),
+                            c(40, 60, 60, 20, 40, 60))
+colnames(model_df_test_profile) <- c("SPC1", "SPC2", "SPC4","fill", "thickness")
+MSPE_profile <- mean((profile_testing - predict.lm(profile_model1, model_df_test_profile))^2)
+print(MSPE_profile)
+predict_profile <- predict.lm(profile_model1, model_df_test_profile)
+```
+
+```{r}
+#roughness
+roughness_model1 <- lm(roughness_training~SPC1 + SPC2 + SPC3 + SPC4 + fill + thickness + speed, data = model_df)
+summary(roughness_model1)
+#step_b <- step(roughness_model1, direction = "backward")
+roughness_model1 <- lm(roughness_training ~ SPC1 + SPC3 + fill + thickness + fill*thickness, data = model_df)
+summary(roughness_model1)
+
+model_df_test_roughness <- data.frame(SPC1_test, SPC3_test,
+                            c(100, 100, 20, 100, 40, 40),
+                            c(0.1, 0.1, 0.1, 0.2, 0.2, 0.2),
+                            c(40, 60, 60, 20, 40, 60))
+colnames(model_df_test_roughness) <- c("SPC1", "SPC3", "fill", "thickness", "speed")
+MSPE_roughness <- mean((roughness_testing - predict.lm(roughness_model1, model_df_test_roughness))^2)
+print(MSPE_roughness)
+predict_roughness <- predict.lm(roughness_model1, model_df_test_roughness)
+```
+
+```{r}
+#cluster
+
+
+name <- c("0.110020", "0.110040", "0.110060", "0.12040", "0.12060", "0.14020", "0.14040", 
+          "0.14060", "0.16020", "0.16040", "0.16060", "0.210020", "0.210040", "0.210060",
+          "0.22020", "0.22060", "0.24020", "0.24040", "0.24060", "0.26060")
+
+cluster_df <- data.frame(profile_training, roughness_training)
+#set.seed(4747)
+cluster_kmeans <- kmeans(cluster_df, 3)
+plot(cluster_df, col = cluster_kmeans$cluster, pch = 19, main = "Clustering between roughness and profile residual", xlab = "profile residual(um^2)", ylab = "roughness(%)")
+points(cluster_kmeans$centers, col = 1:3 , pch = 18, cex = 2)
+plot(data.frame(predict_profile, predict_roughness), col = "purple")
+legend("topright", legend = c("Good", "uncertain", "bad", "Good mean", "uncertain mean", "bad mean"), col = c("red", "black", "green","red", "black","green"), pch = c(19, 19, 19, 18, 18, 18))
+cluster_kmeans$cluster
+
+```
+
+
+
+```{r}
+#high resolution
+folder <- "matrix/"
+file_list <- list.files(path = folder, pattern = "*.csv")
+data_list <- list()
+matrix_list <- list()
+for (i in 1:length(file_list)){
+  temp <- assign(file_list[i], read.csv(paste(folder, file_list[i], sep=''), skip = 23, header = FALSE))
+  temp_matrix <- as.matrix(temp)
+  colnames(temp_matrix) <- NULL
+  temp_matrix[is.na(temp_matrix)] <- 0
+  if(i == 6){
+    temp_matrix = t(temp_matrix)
+  }
+  if(ncol(temp_matrix) == 1634){
+    temp_matrix<-temp_matrix[, -c(1629:1634)]
+  }
+  if(ncol(temp_matrix) == 1648){
+    temp_matrix<-temp_matrix[, -c(1629:1648)]
+  }
+  #print(ncol(temp_matrix))
+  matrix_list[[i]] <- temp_matrix
+  temp_vector <- as.vector(temp_matrix)
+  data_list[[i]] <- temp_vector
+}
+matrix_list[[4]] <- NULL
+```
+
+
+```{r}
+#UMPCA
+
+umpcaTensor2 <-matrix(matrix_list[c(1,4,6,7,8,9,10, 11,13,14, 15,16, 17, 20)])
+umpcaMatrix2 <-abind(umpcaTensor2[[1]], umpcaTensor2[[2]], umpcaTensor2[[3]],
+                    umpcaTensor2[[4]], umpcaTensor2[[5]], umpcaTensor2[[6]],
+                    umpcaTensor2[[7]], umpcaTensor2[[8]], umpcaTensor2[[9]], umpcaTensor2[[10]],
+                    umpcaTensor2[[11]], umpcaTensor2[[12]], umpcaTensor2[[13]],
+                    umpcaTensor2[[14]],along = 0)
+dim(umpcaMatrix2) <- c(1520, 1628, 14)
+
+umpca2 <- UMPCA(umpcaMatrix2, numP = 10)
+#umpcaMatrix <- umpcaMatrix - matrix(t(matrix(umpca$TXmean, dim(umpca$TXmean)[1], dim(umpca$TXmean)[2]*numSpl)),dim(umpca$TXmean)[1]*c(1,1),dim(umpca$TXmean)[2]*numSpl, byrow = T)
+
+#centering
+tx2 <- umpca2$TXmean
+umpcaMatrix2 <- umpcaMatrix2 - abind(tx, tx, tx, tx, tx, tx, tx, tx, tx, tx, tx, tx, tx, tx)
+N <- 2
+numSpl <- 14
+numP <- 10
+newfea2 <- matrix(c(0,0,0,0,0,0,0,0,0,0), c(0,0,0,0,0,0,0,0,0,0,0,0,0,0), nrow = 14, ncol = 10)
+for (i in 1:numP){
+  projFtr2<- MFPCA::ttv(umpcaMatrix2, list(umpca2$Us[[1]][,i],umpca2$Us[[2]][,i]), dim = c(1,2))
+  newfea2[, i] <- projFtr2
+}
+newfea2 <- newfea2[, umpca2$odrIdx]
+
+
+test_umpcaTensor <- matrix(matrix_list[c(3,5,19)])
+test_umpcaMatrix <-abind(test_umpcaTensor[[1]], test_umpcaTensor[[2]], test_umpcaTensor[[3]], along = 0)
+dim(test_umpcaMatrix) <- c(1520, 1628, 3)
+test_umpca <- UMPCA(test_umpcaMatrix, numP = 3)
+#centering
+test_tx <- test_umpca$TXmean
+test_umpcaMatrix <- test_umpcaMatrix - abind(test_tx, test_tx, test_tx)
+
+test_numP <- 3
+test_newfea <- matrix(c(0,0,0), c(0,0,0), nrow = 3, ncol = 3)
+for (i in 1:test_numP){
+  test_projFtr<- MFPCA::ttv(test_umpcaMatrix, list(test_umpca$Us[[1]][,i],test_umpca$Us[[2]][,i]), dim = c(1,2))
+  test_newfea[, i] <- test_projFtr
+}
+test_newfea <- test_newfea[, test_umpca$odrIdx]
+
+MPC1 <- newfea2[,1]
+MPC2 <- newfea2[,2]
+MPC3 <- newfea2[,3]
+MPC4 <- newfea2[,4]
+
+test_MPC1 <- test_newfea[,1]
+test_MPC2 <- test_newfea[,2]
+test_MPC3 <- test_newfea[,3]
+
+
+
+```
+
+
+```{r}
+#refined regression
+profile_highres <- profile_resid[c(1,8,9,14,15,17,20)]
+profile_highres2 <- profile_resid[c(1,4,6,7,8,9,10, 11,13,14, 15,16, 17, 20)]
+roughness_highres  <- roughness[c(1,8,9,14,15,17,20)]
+roughness_highres2  <- roughness[c(1,4,6,7,8,9,10, 11,13,14, 15,16, 17, 20)]
+MPCAmodel_df <- data.frame(MPC1, MPC2, MPC3, MPC4,
+                       c(100, 40, 60, 100, 20, 40, 60), 
+                       c(0.1, 0.1, 0.1, 0.2, 0.2, 0.2, 0.2), 
+                       c(20, 60, 20, 60, 20,20, 60))
+MPCAmodel_df2 <- data.frame(MPC1, MPC2, MPC3, MPC4,
+                            c(100,20,40, 40, 40, 60, 60, 60, 
+                         100, 100, 20, 20, 40, 60), 
+                       c(0.1, 0.1, 0.1, 0.1, 0.1,0.1,0.1, 0.1, 
+                         0.2, 0.2, 0.2, 0.2, 0.2, 0.2), 
+                       c(20, 40, 20, 40, 60, 20, 40, 60, 40,
+                         60, 20, 60, 20, 60))
+colnames(MPCAmodel_df2) <- c("MPC1", "MPC2", "MPC3", "MPC4", "Mfill", "Mthickness", "Mspeed")
+
+
+```
+
+
+
+```{r}
+#profile2
+profile_model2 <- lm(profile_highres2  ~ MPC1 +Mfill + Mspeed, data = MPCAmodel_df2)
+summary(profile_model2)
+step_b <- step(profile_model2, direction = "backward")
+
+MPCAmodel_df_test_profile <- data.frame(test_MPC1,
+                       c(100, 100, 20, 100, 40, 40),
+                       c(40, 60, 60, 20, 40, 60))
+colnames(MPCAmodel_df_test_profile) <- c("MPC1", "Mfill", "Mspeed")
+profile_testing2 <- profile_resid[c(3,5,19)]
+MSPE_profile2 <- mean((profile_testing2 - predict.lm(profile_model2, MPCAmodel_df_test_profile))^2)
+print(MSPE_profile2)
+```
+
+```{r}
+#roughness2
+roughness_model2 <- lm(roughness_highres2 ~ MPC3 + Mfill + Mthickness + Mfill*Mthickness, data = MPCAmodel_df2)
+summary(roughness_model2)
+step_b <- step(roughness_model2, direction = "backward")
+
+MPCAmodel_df_test_roughness <- data.frame(test_MPC3,
+                       c(100, 100, 20, 100, 40, 40),
+                       c(0.1, 0.1, 0.1, 0.2, 0.2, 0.2),
+                       c(40, 60, 60, 20, 40, 60))
+colnames(MPCAmodel_df_test_roughness) <- c("MPC3", "Mfill", "Mthickness", "Mspeed")
+roughness_testing2 <- roughness[c(3,5,19)]
+MSPE_roughness2 <- mean((roughness_testing2 - predict.lm(roughness_model2, MPCAmodel_df_test_roughness))^2)
+print(MSPE_roughness2)
+```
+
