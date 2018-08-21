@@ -7,7 +7,7 @@ The package includes raw R program and all collected data.
 The final.Rmd notebook includes several blocks of codes. The functionality of each code will be explained below.
 
 ### 3D scanner
-Import 20 3D scanner image data matrices from "3d-printing" folder. Split the 20 samples into training and testing set (14:6).
+Import 20 3D scanner image data matrices from "3D_scanner" folder. Split the 20 samples into training and testing set (14:6).
 Implement principal component analysis on both training and testing set and extract first four principal components.
 
 ### roughness
@@ -42,8 +42,8 @@ both training and testing set and extract first four principal components.
 Create data frame consists of predictors(MPCs, fill, thickness and speed) for refined multi linear regression.
 
 ### profile2
-Train refined profile deviation model using training set and test the performance using testing set. Compute MSPE(mean square prediction error).
+Train refined profile deviation model using training set and test the performance using "uncertain" testing set. Compute MSPE(mean square prediction error).
 
 ### roughness2
-Train refined roughness model using training set and test the performance using testing set. Compute MSPE(mean square prediction error).
+Train refined roughness model using training set and test the performance using "uncertain" testing set. Compute MSPE(mean square prediction error).
 
